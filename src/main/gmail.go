@@ -120,6 +120,46 @@ func mustBePrinted(message *gmail.Message) bool {
 	return false
 }
 
+func tryToPrint(mFull *gmail.Message, srv *gmail.Service, user string) {
+	labels := mFull.LabelIds
+	if findLabel(UNREAD, labels) && findLabel(CATEGORY_PERSONAL, labels) {
+		for _, part := range mFull.Payload.Parts {
+			if len(part.Body.AttachmentId) > 0 {
+				if mustBePrinted(mFull) {
+					filename := part.Filename
+					if _, err := os.Stat("../files/" + filename); os.IsNotExist(err) {
+						fmt.Println(filename)
+
+						file, err := srv.Users.Messages.Attachments.Get(user, mFull.Id, part.Body.AttachmentId).Do()
+						if err != nil {
+							log.Fatalf("Unable to get attachments: %v", err)
+						}
+
+						sDec, err := base64.URLEncoding.DecodeString(file.Data)
+						if err != nil {
+							log.Fatalf("Unable to decode string: %v", err)
+						}
+
+						f, err := os.Create("../files/" + filename)
+						if err != nil {
+							log.Fatalf("Unable to create file. %v", err)
+						}
+
+						_, err = f.Write(sDec)
+						if err != nil {
+							log.Fatalf("Unable to write file. %v", err)
+						}
+
+						f.Close()
+
+						fmt.Println(" => saved")
+					}
+				}
+			}
+		}
+	}
+}
+
 func main() {
 	ctx := context.Background()
 
@@ -154,43 +194,7 @@ func main() {
 				log.Fatalf("Unable to get messages: %v", err)
 			}
 
-			labels := mFull.LabelIds
-			if findLabel(UNREAD, labels) && findLabel(CATEGORY_PERSONAL, labels) {
-				for _, part := range mFull.Payload.Parts {
-					if len(part.Body.AttachmentId) > 0 {
-						if mustBePrinted(mFull) {
-							filename := part.Filename
-							if _, err := os.Stat("../files/" + filename); os.IsNotExist(err) {
-								fmt.Println(filename)
-
-								file, err := srv.Users.Messages.Attachments.Get(user, m.Id, part.Body.AttachmentId).Do()
-								if err != nil {
-									log.Fatalf("Unable to get attachments: %v", err)
-								}
-
-								sDec, err := base64.URLEncoding.DecodeString(file.Data)
-								if err != nil {
-									log.Fatalf("Unable to decode string: %v", err)
-								}
-
-								f, err := os.Create("../files/" + filename)
-								if err != nil {
-									log.Fatalf("Unable to create file. %v", err)
-								}
-
-								_, err = f.Write(sDec)
-								if err != nil {
-									log.Fatalf("Unable to write file. %v", err)
-								}
-
-								f.Close()
-
-								fmt.Println(" => saved")
-							}
-						}
-					}
-				}
-			}
+			tryToPrint(mFull, srv, user)
 		}
 	}
 }
