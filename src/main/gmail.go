@@ -23,13 +23,24 @@ import (
 
 const (
 	UNREAD            = "UNREAD"
-	MUST_SAVE         = "SAVE"
+	MUST_SAVE         = "save"
 	CATEGORY_PERSONAL = "CATEGORY_PERSONAL"
 	SUBJECT           = "Subject"
-	MUST_PRINT        = "PRINT"
+	FROM              = "From"
+	MUST_PRINT        = "print"
 	PRINTER_NAME      = "Deskjet-3050A-J611-series"
 	FILES_PATH        = "../files/"
+	CONFIG_PATH       = "../config/"
 )
+
+type User struct {
+	Name   string   `json:"name"`
+	Emails []string `json:"emails"`
+}
+
+type Token struct {
+	Content string `json:"token"`
+}
 
 // getClient uses a Context and Config to retrieve a Token
 // then generate a Client. It returns the generated Client.
@@ -103,7 +114,7 @@ func saveToken(file string, token *oauth2.Token) {
 	json.NewEncoder(f).Encode(token)
 }
 
-func findLabel(label string, labels []string) bool {
+func checkLabel(label string, labels []string) bool {
 	for _, lab := range labels {
 		if label == lab {
 			return true
@@ -113,10 +124,28 @@ func findLabel(label string, labels []string) bool {
 	return false
 }
 
-func checkSubject(message *gmail.Message, subjectSnippet string) bool {
+func isAuthorized(users []User, token string, message *gmail.Message) bool {
+	for _, user := range users {
+		for _, email := range user.Emails {
+			if checkAttribute(message, email, FROM) {
+				return true
+			}
+
+		}
+	}
+
+	// if token is not find the user is definitively unauthorized
+	return checkAttribute(message, token, SUBJECT)
+}
+
+func request(message *gmail.Message, subjectSnippet string) bool {
+	return checkAttribute(message, subjectSnippet, SUBJECT)
+}
+
+func checkAttribute(message *gmail.Message, strResearch string, attribute string) bool {
 	for _, v := range message.Payload.Headers {
-		if v.Name == SUBJECT {
-			if len(strings.Split(strings.ToUpper(v.Value), subjectSnippet)) > 1 {
+		if v.Name == attribute {
+			if len(strings.Split(strings.ToLower(v.Value), strResearch)) > 1 {
 				return true
 			}
 		}
@@ -198,7 +227,7 @@ func printAttachments(fullMessage *gmail.Message, srv *gmail.Service, user strin
 
 }
 
-func handleMessage(r *gmail.ListMessagesResponse, srv *gmail.Service, user string) {
+func handleMessage(r *gmail.ListMessagesResponse, srv *gmail.Service, user string, authUsers []User, token string) {
 	if len(r.Messages) > 0 {
 		for _, m := range r.Messages {
 			fullMessage, err := srv.Users.Messages.Get(user, m.Id).Do()
@@ -207,14 +236,18 @@ func handleMessage(r *gmail.ListMessagesResponse, srv *gmail.Service, user strin
 			}
 
 			labels := fullMessage.LabelIds
-			if findLabel(CATEGORY_PERSONAL, labels) {
-				if findLabel(UNREAD, labels) {
+			if checkLabel(CATEGORY_PERSONAL, labels) {
+				if checkLabel(UNREAD, labels) {
+					if isAuthorized(authUsers, token, fullMessage) {
 
-					if checkSubject(fullMessage, MUST_PRINT) {
-						go printAttachments(fullMessage, srv, user)
+						if request(fullMessage, MUST_PRINT) {
+							go printAttachments(fullMessage, srv, user)
 
-					} else if checkSubject(fullMessage, MUST_SAVE) {
-						go saveAttachments(fullMessage, srv, user)
+						} else if request(fullMessage, MUST_SAVE) {
+							go saveAttachments(fullMessage, srv, user)
+						}
+					} else {
+						fmt.Println("User is not authorised")
 					}
 				}
 			}
@@ -225,7 +258,23 @@ func handleMessage(r *gmail.ListMessagesResponse, srv *gmail.Service, user strin
 func main() {
 	ctx := context.Background()
 
-	b, err := ioutil.ReadFile("client_secret.json")
+	b, err := ioutil.ReadFile(CONFIG_PATH + "users.json")
+	if err != nil {
+		log.Fatalf("Unable to read users file: %v", err)
+	}
+
+	var authUsers []User
+	json.Unmarshal(b, &authUsers)
+
+	b, err = ioutil.ReadFile(CONFIG_PATH + "token.json")
+	if err != nil {
+		log.Fatalf("Unable to read token file: %v", err)
+	}
+
+	var token Token
+	json.Unmarshal(b, &token)
+
+	b, err = ioutil.ReadFile(CONFIG_PATH + "client_secret.json")
 	if err != nil {
 		log.Fatalf("Unable to read client secret file: %v", err)
 	}
@@ -251,7 +300,7 @@ func main() {
 			log.Fatalf("Unable to retrieve messages list. %v", err)
 		}
 
-		handleMessage(listMessages, srv, user)
+		handleMessage(listMessages, srv, user, authUsers, token.Content)
 
 		time.Sleep(60 * time.Minute)
 	}
