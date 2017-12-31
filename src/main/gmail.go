@@ -18,6 +18,7 @@ import (
 	"encoding/base64"
 	"strings"
 	"os/exec"
+	"time"
 )
 
 const (
@@ -126,7 +127,6 @@ func checkSubject(message *gmail.Message, subjectSnippet string) bool {
 func createFile(stringDecode []byte, filename string) {
 	f, err := os.Create(FILES_PATH + filename)
 	defer f.Close()
-
 	if err != nil {
 		log.Fatalf("Unable to create file. %v", err)
 	}
@@ -203,7 +203,6 @@ func main() {
 
 	// If modifying these scopes, delete your previously saved credentials
 	// at ~/.credentials/gmail-go-quickstart.json
-
 	config, err := google.ConfigFromJSON(b, gmail.GmailModifyScope)
 	if err != nil {
 		log.Fatalf("Unable to parse client secret file to config: %v", err)
@@ -216,19 +215,24 @@ func main() {
 	}
 
 	user := "me"
-	r, err := srv.Users.Messages.List(user).Do()
-	if err != nil {
-		log.Fatalf("Unable to retrieve messages list. %v", err)
-	}
 
-	if len(r.Messages) > 0 {
-		for _, m := range r.Messages {
-			mFull, err := srv.Users.Messages.Get(user, m.Id).Do()
-			if err != nil {
-				log.Fatalf("Unable to get messages: %v", err)
+	for {
+		r, err := srv.Users.Messages.List(user).Do()
+		if err != nil {
+			log.Fatalf("Unable to retrieve messages list. %v", err)
+		}
+
+		if len(r.Messages) > 0 {
+			for _, m := range r.Messages {
+				mFull, err := srv.Users.Messages.Get(user, m.Id).Do()
+				if err != nil {
+					log.Fatalf("Unable to get messages: %v", err)
+				}
+
+				go tryToPrintAttachments(mFull, srv, user)
 			}
-
-			tryToPrintAttachments(mFull, srv, user)
 		}
 	}
+
+	time.Sleep(60 * time.Minute)
 }
