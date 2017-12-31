@@ -23,9 +23,10 @@ import (
 
 const (
 	UNREAD            = "UNREAD"
+	MUST_SAVE         = "SAVE"
 	CATEGORY_PERSONAL = "CATEGORY_PERSONAL"
 	SUBJECT           = "Subject"
-	MUST_PRINT        = "print"
+	MUST_PRINT        = "PRINT"
 	PRINTER_NAME      = "Deskjet-3050A-J611-series"
 	FILES_PATH        = "../files/"
 )
@@ -115,7 +116,7 @@ func findLabel(label string, labels []string) bool {
 func checkSubject(message *gmail.Message, subjectSnippet string) bool {
 	for _, v := range message.Payload.Headers {
 		if v.Name == SUBJECT {
-			if len(strings.Split(strings.ToLower(v.Value), subjectSnippet)) > 1 {
+			if len(strings.Split(strings.ToUpper(v.Value), subjectSnippet)) > 1 {
 				return true
 			}
 		}
@@ -139,17 +140,6 @@ func createFile(stringDecode []byte, filename string) {
 	fmt.Println(" => is saved")
 }
 
-func printFile(filename string) {
-	fmt.Println(" => Try to start printing")
-
-	_, err := exec.Command("lp", "-d", PRINTER_NAME, FILES_PATH+filename).Output()
-	if err != nil {
-		log.Panic(err)
-	}
-
-	fmt.Println(" => is in queue for printing")
-}
-
 func removeLabel(label string, srv *gmail.Service, user string, messageId string) {
 	modifyMessageRequest := gmail.ModifyMessageRequest{
 		nil,
@@ -163,30 +153,69 @@ func removeLabel(label string, srv *gmail.Service, user string, messageId string
 	}
 }
 
-func tryToPrintAttachments(mFull *gmail.Message, srv *gmail.Service, user string) {
-	labels := mFull.LabelIds
-	if findLabel(UNREAD, labels) && findLabel(CATEGORY_PERSONAL, labels) {
-		defer removeLabel(UNREAD, srv, user, mFull.Id)
+func saveAttachments(fullMessage *gmail.Message, srv *gmail.Service, user string) *[]string {
+	defer removeLabel(UNREAD, srv, user, fullMessage.Id)
 
-		for _, part := range mFull.Payload.Parts {
-			if len(part.Body.AttachmentId) > 0 {
-				if checkSubject(mFull, MUST_PRINT) {
-					filename := part.Filename
-					fmt.Println(filename)
+	fmt.Println(" => Try to saving")
 
-					file, err := srv.Users.Messages.Attachments.Get(user, mFull.Id, part.Body.AttachmentId).Do()
-					if err != nil {
-						log.Fatalf("Unable to get attachments: %v", err)
+	var attachments []string
+	for _, part := range fullMessage.Payload.Parts {
+		if len(part.Body.AttachmentId) > 0 {
+			filename := part.Filename
+			fmt.Println(filename)
+
+			file, err := srv.Users.Messages.Attachments.Get(user, fullMessage.Id, part.Body.AttachmentId).Do()
+			if err != nil {
+				log.Fatalf("Unable to get attachments: %v", err)
+			}
+
+			sDec, err := base64.URLEncoding.DecodeString(file.Data)
+			if err != nil {
+				log.Fatalf("Unable to decode string: %v", err)
+			}
+
+			createFile(sDec, filename)
+			attachments = append(attachments, filename)
+		}
+	}
+
+	return &attachments
+}
+
+func printAttachments(fullMessage *gmail.Message, srv *gmail.Service, user string) {
+	attachments := saveAttachments(fullMessage, srv, user)
+
+	fmt.Println(" => Try to start printing")
+
+	for _, fileName := range *attachments {
+		_, err := exec.Command("lp", "-d", PRINTER_NAME, FILES_PATH+fileName).Output()
+		if err != nil {
+			log.Panic(err)
+		}
+
+		fmt.Println(" => is in queue for printing")
+	}
+
+}
+
+func handleMessage(r *gmail.ListMessagesResponse, srv *gmail.Service, user string) {
+	if len(r.Messages) > 0 {
+		for _, m := range r.Messages {
+			fullMessage, err := srv.Users.Messages.Get(user, m.Id).Do()
+			if err != nil {
+				log.Fatalf("Unable to get messages: %v", err)
+			}
+
+			labels := fullMessage.LabelIds
+			if findLabel(CATEGORY_PERSONAL, labels) {
+				if findLabel(UNREAD, labels) {
+
+					if checkSubject(fullMessage, MUST_PRINT) {
+						go printAttachments(fullMessage, srv, user)
+
+					} else if checkSubject(fullMessage, MUST_SAVE) {
+						go saveAttachments(fullMessage, srv, user)
 					}
-
-					sDec, err := base64.URLEncoding.DecodeString(file.Data)
-					if err != nil {
-						log.Fatalf("Unable to decode string: %v", err)
-					}
-
-					createFile(sDec, filename)
-
-					printFile(filename)
 				}
 			}
 		}
@@ -217,22 +246,13 @@ func main() {
 	user := "me"
 
 	for {
-		r, err := srv.Users.Messages.List(user).Do()
+		listMessages, err := srv.Users.Messages.List(user).Do()
 		if err != nil {
 			log.Fatalf("Unable to retrieve messages list. %v", err)
 		}
 
-		if len(r.Messages) > 0 {
-			for _, m := range r.Messages {
-				mFull, err := srv.Users.Messages.Get(user, m.Id).Do()
-				if err != nil {
-					log.Fatalf("Unable to get messages: %v", err)
-				}
+		handleMessage(listMessages, srv, user)
 
-				go tryToPrintAttachments(mFull, srv, user)
-			}
-		}
+		time.Sleep(60 * time.Minute)
 	}
-
-	time.Sleep(60 * time.Minute)
 }
