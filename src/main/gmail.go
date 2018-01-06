@@ -227,7 +227,7 @@ func printAttachments(fullMessage *gmail.Message, srv *gmail.Service, user strin
 
 }
 
-func handleMessage(r *gmail.ListMessagesResponse, srv *gmail.Service, user string, authUsers []User, token string) {
+func handleMessages(r *gmail.ListMessagesResponse, srv *gmail.Service, user string, authUsers []User, token string) {
 	if len(r.Messages) > 0 {
 		for _, m := range r.Messages {
 			fullMessage, err := srv.Users.Messages.Get(user, m.Id).Do()
@@ -239,10 +239,8 @@ func handleMessage(r *gmail.ListMessagesResponse, srv *gmail.Service, user strin
 			if checkLabel(CATEGORY_PERSONAL, labels) {
 				if checkLabel(UNREAD, labels) {
 					if isAuthorized(authUsers, token, fullMessage) {
-
 						if request(fullMessage, MUST_PRINT) {
 							go printAttachments(fullMessage, srv, user)
-
 						} else if request(fullMessage, MUST_SAVE) {
 							go saveAttachments(fullMessage, srv, user)
 						}
@@ -262,7 +260,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("Unable to read users file: %v", err)
 	}
-
 	var authUsers []User
 	json.Unmarshal(b, &authUsers)
 
@@ -270,7 +267,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("Unable to read token file: %v", err)
 	}
-
 	var token Token
 	json.Unmarshal(b, &token)
 
@@ -300,7 +296,7 @@ func main() {
 			log.Fatalf("Unable to retrieve messages list. %v", err)
 		}
 
-		handleMessage(listMessages, srv, user, authUsers, token.Content)
+		handleMessages(listMessages, srv, user, authUsers, token.Content)
 
 		time.Sleep(60 * time.Minute)
 	}
