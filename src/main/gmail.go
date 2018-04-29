@@ -1,23 +1,22 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"golang.org/x/net/context"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
+	"google.golang.org/api/gmail/v1"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"os/user"
 	"path/filepath"
-
-	"golang.org/x/net/context"
-	"golang.org/x/oauth2"
-	"golang.org/x/oauth2/google"
-	"google.golang.org/api/gmail/v1"
-	"encoding/base64"
 	"strings"
-	"os/exec"
 	"time"
 )
 
@@ -236,18 +235,17 @@ func handleMessages(r *gmail.ListMessagesResponse, srv *gmail.Service, user stri
 			}
 
 			labels := fullMessage.LabelIds
-			if checkLabel(CATEGORY_PERSONAL, labels) {
-				if checkLabel(UNREAD, labels) {
-					if isAuthorized(authUsers, token, fullMessage) {
-						if request(fullMessage, MUST_PRINT) {
-							go printAttachments(fullMessage, srv, user)
-						} else if request(fullMessage, MUST_SAVE) {
-							go saveAttachments(fullMessage, srv, user)
-						}
-					} else {
-						fmt.Println("User is not authorised")
-					}
+			if checkLabel(CATEGORY_PERSONAL, labels) &&
+				checkLabel(UNREAD, labels) &&
+				isAuthorized(authUsers, token, fullMessage) {
+
+				if request(fullMessage, MUST_PRINT) {
+					go printAttachments(fullMessage, srv, user)
+				} else if request(fullMessage, MUST_SAVE) {
+					go saveAttachments(fullMessage, srv, user)
 				}
+			} else {
+				fmt.Println("User is not authorised")
 			}
 		}
 	}
